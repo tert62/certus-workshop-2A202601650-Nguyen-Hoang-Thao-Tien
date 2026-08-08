@@ -1,13 +1,21 @@
 name: ci
 on: [push, pull_request]
 jobs:
-  test:
+  backend:
     runs-on: ubuntu-latest
+    strategy:
+      # Ma trận trải đúng dải mà docs/setup.md hứa. Trước đây CI chỉ chạy 3.12
+      # trong khi tài liệu nói "3.11 trở lên", nên ca hỏng thật (3.14: scipy
+      # 1.15.0 không có wheel, pip chết ở bước sinh metadata) không có ai bắt.
+      # Chặn trên là 3.13, và nó nằm ở đây để đổi trần là phải đổi CI.
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - name: Install
         run: |
           cd src/backend
@@ -16,3 +24,30 @@ jobs:
         run: cd src/backend && ruff check .
       - name: Pytest
         run: cd src/backend && python -m pytest ../../tests -q
+      - name: Doctor
+        run: cd src/backend && python -m certus doctor
+      # Golden eval chạy thật 3 repo mẫu. Nó bắt được lớp lỗi mà pytest không
+      # bắt: mọi test xanh trong khi con số ra ngoài đã trôi (mẫu số đổi, probe
+      # bị chặn im lặng, cassette suy biến).
+      - name: Golden eval
+        if: matrix.python-version == '3.12'
+        run: cd src/backend && python -m certus evals
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+      - name: Install
+        run: cd src/frontend && npm ci
+      - name: Lint
+        run: cd src/frontend && npm run lint
+      # `npm run build` chạy `tsc -b` trước vite build, nên đây vừa là bản dựng
+      # vừa là phép kiểm kiểu. Thiếu job này thì một hợp đồng lệch giữa
+      # `types/sse.ts` và backend chỉ lộ ra trên máy người chạy `npm run dev`.
+      - name: Build
+        run: cd src/frontend && npm run build

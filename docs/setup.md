@@ -6,17 +6,23 @@ Mục tiêu: chạy được CERTUS trên máy bạn trong ~20 phút. Nếu quá
 
 | | Phiên bản | Kiểm tra |
 |---|---|---|
-| Python | 3.11 trở lên | `python3 --version` |
+| Python | **3.11, 3.12 hoặc 3.13** — không phải 3.14 | `python3 --version` |
 | Node.js | 18 trở lên | `node --version` |
 | Git | bất kỳ | `git --version` |
 
 Không cần Docker. Không cần API key.
 
+> **Vì sao chặn trên ở 3.13.** `requirements.txt` ghim `scipy==1.15.0`, bản này
+> chưa có wheel cho Python 3.14 nên pip rơi về build từ mã nguồn và chết ở bước
+> sinh metadata (`Encountered error while generating package metadata: scipy`).
+> Máy nào `python3 --version` ra 3.14 thì tạo venv bằng bản cũ hơn:
+> `python3.12 -m venv .venv`.
+
 ## Bước 1 — Lấy mã nguồn
 
 ```bash
 git clone <LINK_REPO>
-cd ai-product-design-workshop
+cd certus-workshop
 ```
 
 ## Bước 2 — Backend
@@ -58,15 +64,37 @@ npm run dev
 
 Mở http://localhost:5173.
 
+Mặc định frontend gọi **backend thật** (`VITE_USE_MOCK=0`). Không cần tạo `.env`
+gì cả. Chỉ tạo `.env` khi bạn muốn xem UI mà chưa dựng được backend — xem mục
+"Lỗi thường gặp" bên dưới.
+
 ## Bước 6 — Chạy thử
 
 ```bash
-# terminal thứ ba, nhớ activate venv
-cd src/backend && source .venv/bin/activate
-python -m certus analyze ../../fixtures/targets/shopcart
+# terminal thứ ba
+cd src/backend
+.venv/bin/python -m certus analyze ../../fixtures/targets/shopcart
 ```
 
-Nếu ra một bảng kết quả thì bạn đã sẵn sàng.
+Phải ra **ba dòng mẫu số**, mỗi dòng kèm khoảng tin cậy:
+
+```
+  line_coverage       156/160   =  97.5%   wilson 95%: [93.7%, 99.0%]
+  mutation_score        1/1     = 100.0%   wilson 95%: [20.7%, 100.0%]  [n-too-small, ...]
+  grid_coverage        27/63    =  42.9%   wilson 95%: [31.4%, 55.1%]
+```
+
+Thiếu dòng `line_coverage`, hoặc `grid_coverage` ra `0/63`, nghĩa là probe không
+chạy được — CERTUS sẽ **từ chối phân tích** và nói rõ lý do thay vì báo 0%.
+
+## Bước 7 — Golden eval (không bắt buộc)
+
+```bash
+.venv/bin/python -m certus evals
+```
+
+Chạy lại 3 repo mẫu và so từng con số với `evals/golden.json`. Đây là lưới an
+toàn: con số nào trôi thì nó đỏ, kể cả khi bộ test vẫn xanh.
 
 ---
 
@@ -153,21 +181,29 @@ npm install --legacy-peer-deps
 uvicorn app.main:app --port 8001
 npm run dev -- --port 5174
 ```
-Nếu đổi cổng backend, sửa `src/frontend/.env` -> `VITE_API_URL=http://localhost:8001`.
+Nếu đổi cổng backend, sửa `src/frontend/vite.config.ts` (proxy `/api`) hoặc đặt
+`VITE_API_BASE=http://localhost:8001` trong `src/frontend/.env`. Tên biến là
+`VITE_API_BASE` — không phải `VITE_API_URL`.
 
 **Xem giao diện mà chưa chạy được backend**
 ```bash
 cd src/frontend && VITE_USE_MOCK=1 npm run dev
 ```
-Frontend có sẵn dữ liệu giả lập, xem được toàn bộ UI.
+Frontend có sẵn dữ liệu giả lập, xem được toàn bộ UI. Nhớ **tắt lại** khi backend
+đã chạy: một UI mock trông giống hệt UI thật, và đó là lý do mặc định của nó là 0.
+
+**Bảng kết quả thiếu dòng `line_coverage`, grid ra 0%**
+Lượt cũ (trước bản sửa) im lặng trả 0% khi probe không chạy được. Bản hiện tại
+từ chối phân tích và in lý do. Chạy `python -m certus doctor` — mục
+`probe chạy được` phải OK.
 
 ---
 
 ## Chạy test
 
 ```bash
-cd src/backend && source .venv/bin/activate
-python -m pytest ../../tests/ -q
+cd src/backend
+.venv/bin/python -m pytest ../../tests/ -q
 ```
 
 Toàn bộ phải xanh. Nếu có test đỏ ngay sau khi clone, đó là lỗi môi trường — báo cho chúng tôi.

@@ -1,0 +1,76 @@
+{
+  "shopcart": {
+    "line": [
+      156,
+      160
+    ],
+    "mutation": [
+      1,
+      1
+    ],
+    "grid": [
+      27,
+      63
+    ],
+    "cells_total": 63,
+    "cells_na": 0,
+    "cells_unknown": 36,
+    "zones": 2,
+    "gates": 2,
+    "claims": 6,
+    "rejected_claims": 6,
+    "verdict": "blocked"
+  },
+  "ledger": {
+    "line": [
+      136,
+      136
+    ],
+    "mutation": null,
+    "grid": [
+      0,
+      6
+    ],
+    "cells_total": 6,
+    "cells_na": 0,
+    "cells_unknown": 6,
+    "zones": 1,
+    "gates": 1,
+    "claims": 9,
+    "rejected_claims": 3,
+    "verdict": "pass"
+  },
+  "payments": {
+    "line": [
+      122,
+      122
+    ],
+    "mutation": null,
+    "grid": [
+      0,
+      8
+    ],
+    "cells_total": 8,
+    "cells_na": 0,
+    "cells_unknown": 8,
+    "zones": 1,
+    "gates": 1,
+    "claims": 6,
+    "rejected_claims": 4,
+    "verdict": "pass"
+  },
+  "_cassettes": {
+    "analyze__0b7263aad334.json": 0,
+    "analyze__51f21aae4beb.json": 4,
+    "analyze__617f919ceb91.json": 3,
+    "analyze__8f9292adc831.json": 3,
+    "analyze__92c93e5f383e.json": 6,
+    "analyze__9c69d6ce6b2f.json": 4,
+    "analyze__ad5a08b017da.json": 4,
+    "analyze__d250e98ca5f5.json": 4,
+    "analyze__e7677f1c43c9.json": 4,
+    "chat__a2a0fc43de4a.json": 0,
+    "chat__e7e0352cb2e2.json": 0,
+    "chat__f7bf44195911.json": 0
+  }
+}

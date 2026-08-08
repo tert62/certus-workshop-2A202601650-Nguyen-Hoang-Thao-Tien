@@ -19,9 +19,11 @@ _BACKEND = Path(__file__).resolve().parents[1] / "src" / "backend"
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
+from app.contracts.errors import CertusError  # noqa: E402
 from app.core.exec import mutate  # noqa: E402
 from app.core.exec.mutate import (  # noqa: E402
     CONCLUSIVE,
+    MUTMUT_DIR,
     STATUS_BY_EXIT_CODE,
     MutationReport,
     demangle,
@@ -294,7 +296,40 @@ def test_mutmut_is_invoked_through_the_interpreter() -> None:
     argv = mutmut_argv(["pkg/mod.py"], cfg)
     assert argv[:4] == ["python", "-m", "mutmut", "run"]
     assert str(cfg.mutation.max_children) in argv
+    # Positional — đó là hình dạng THẬT của `mutmut run` 3.2 (`MUTANT_NAMES`).
+    # Nó KHÔNG nhận cờ đường dẫn; phạm vi mutate đến từ `[mutmut] paths_to_mutate`
+    # trong setup.cfg. Cửa chặn cho ca thiếu khoá đó nằm ở `run_mutations`, xem
+    # `test_run_mutations_refuses_an_empty_report_from_a_failed_probe`.
     assert argv[-1] == "pkg/mod.py"
+
+
+def test_run_mutations_refuses_an_empty_report_from_a_failed_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0 mutant + probe hỏng = CHƯA ĐO, không phải "đo xong, sạch".
+
+    Ca thật đã gặp: mutmut 3.2 không nhận đường dẫn qua CLI và cũng không đọc
+    `paths_to_mutate` từ setup.cfg; nó đoán từ CWD, đoán trượt thì ném ngay ở
+    bước sinh mutant. Probe về exit 1, không tệp `.meta` nào tồn tại, và report
+    ra `killed=0, survived=0` — đọc y hệt một bộ kiểm hoàn hảo.
+    """
+    workspace = tmp_path / "trong"
+    (workspace / MUTMUT_DIR).mkdir(parents=True)
+
+    def fake_run_probe(ws: Path, argv: list[str], **kwargs: object) -> ProbeResult:
+        return ProbeResult(
+            exit_code=1,
+            stdout="generating mutants",
+            stderr="FileNotFoundError: Could not figure out where the code to mutate is.",
+            duration_ms=1,
+            command=" ".join(argv),
+            evidence_id="ev-1",
+        )
+
+    monkeypatch.setattr(mutate, "run_probe", fake_run_probe)
+    with pytest.raises(CertusError) as exc:
+        run_mutations(workspace, seed_id="seed-1")
+    assert "chưa xảy ra" in str(exc.value)
 
 
 def test_run_mutations_logs_the_run_and_reads_the_artifacts(

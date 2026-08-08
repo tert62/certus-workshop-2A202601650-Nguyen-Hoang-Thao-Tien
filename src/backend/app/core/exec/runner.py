@@ -17,6 +17,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -271,13 +272,51 @@ def _child_env(cfg: ExecConfig, run_dir: Path) -> dict[str, str]:
     return env
 
 
+#: Tên logic được nối thẳng vào interpreter đang chạy thay vì tra PATH.
+_INTERPRETER_NAMES = {"python", "python3"}
+_INTERPRETER_MODULES = {"pytest", "coverage"}
+
+
+def _resolve_program(argv: list[str]) -> list[str]:
+    """Đổi tên chương trình logic thành interpreter ĐANG CHẠY.
+
+    Vì sao không để `subprocess` tra PATH: `python`, `pytest`, `coverage` chỉ có
+    trên PATH khi venv đã được activate. Ai chạy `.venv/bin/python -m certus`
+    (đúng như docs/setup.md gợi ý ở Bước 6, và đúng như IDE hay làm) thì con
+    không tìm thấy `coverage` → probe bị chặn → mẫu số về 0. Đo thật: cùng một
+    repo cho `line 156/160 · grid 27/63` khi có venv trên PATH, và
+    `không có dòng line · grid 0/63` khi không có. Hai kết quả khác nhau cho
+    cùng một mã nguồn, khác nhau vì một biến môi trường — đó là phép đo hỏng.
+
+    `sys.executable` là interpreter đang chạy CERTUS, tức chính venv đã cài
+    `coverage`/`pytest` trong requirements. Gọi `-m` thay vì tìm file
+    `.venv/bin/pytest`: script wrapper có thể không tồn tại (cài bằng
+    `--no-scripts`, hoặc Windows đặt tên khác), còn module thì luôn có.
+
+    CHỈ áp dụng cho chế độ subprocess. Docker chạy trong image khác, ở đó
+    đường dẫn của host không tồn tại — xem `_run_docker`.
+
+    Allowlist đã chạy TRƯỚC hàm này (`run_probe`), trên tên logic. Thứ tự đó
+    load-bearing: nếu đổi tên trước rồi mới kiểm thì `sys.executable` tên
+    `python3.12` sẽ trượt allowlist `{"pytest","coverage","python"}`.
+    """
+    if not argv:
+        return argv
+    name = Path(argv[0]).name
+    if name in _INTERPRETER_NAMES:
+        return [sys.executable, *argv[1:]]
+    if name in _INTERPRETER_MODULES:
+        return [sys.executable, "-m", name, *argv[1:]]
+    return argv
+
+
 def _run_subprocess(
     workspace: Path, argv: list[str], *, cfg: ExecConfig, timeout_s: int
 ) -> tuple[int, str, str, bool, str | None]:
     run_dir = Path(tempfile.mkdtemp(prefix="certus-probe-"))
     try:
         proc = subprocess.run(  # noqa: S603 - argv đã qua _is_allowed
-            argv,
+            _resolve_program(argv),
             cwd=str(workspace),
             env=_child_env(cfg, run_dir),
             capture_output=True,

@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from app.contracts.errors import CertusError
 from app.core.exec.runner import (
     EvidenceLedger,
     ExecConfig,
@@ -328,6 +329,28 @@ def mutmut_argv(paths: list[str] | None, cfg: ExecConfig) -> list[str]:
     Gọi `python -m mutmut` chứ không gọi `mutmut`: entry point script không chắc
     nằm trên PATH của tiến trình con (venv, pipx, cài user-level), còn interpreter
     thì luôn có.
+
+    CẢNH BÁO VỀ `paths` — đã đọc mã mutmut 3.2.0 và chạy thử, không phải suy đoán.
+
+    `mutmut run` chỉ nhận `--max-children` và một danh sách positional
+    `MUTANT_NAMES`. Nó KHÔNG có cờ đường dẫn nào: `--paths-to-mutate` cho ra
+    `Error: No such option`. Và `[mutmut] paths_to_mutate` trong `setup.cfg`
+    cũng KHÔNG được đọc — `read_config()` (`__main__.py:948`) chỉ lấy
+    `do_not_mutate` và `also_copy`, còn dòng 152 gọi thẳng
+    `guess_paths_to_mutate()` vô điều kiện. Thông báo lỗi của chính mutmut chỉ
+    tới hai cách sửa mà bản 3.2 không cài đặt cái nào.
+
+    Phạm vi mutate vì vậy do CWD quyết định: `guess_paths_to_mutate()` lấy
+    `lib/`, rồi `src/`, rồi một thư mục TRÙNG TÊN với thư mục hiện hành. Nên
+    workspace phải là repo có layout `<tên>/<tên>/` — đúng layout của
+    `fixtures/targets/*`, và đó là lý do nó chạy được ở đó mà không chạy được
+    trên một bản sao đặt tên khác.
+
+    Hệ quả nếu không ai canh: probe exit 1, không tệp `.meta` nào được sinh,
+    `parse_mutmut_meta` trả 0 killed / 0 survived / 0 seen — một lượt CHƯA TỪNG
+    CHẠY đọc y hệt một lượt bộ kiểm giết sạch. Đó đúng là `O1` của DEBTS.md xảy
+    ra bên trong chính module viết ra để chống nó. Cửa chặn nằm ở
+    `run_mutations()` bên dưới.
     """
     argv = ["python", "-m", "mutmut", "run", "--max-children", str(cfg.mutation.max_children)]
     if paths:
@@ -363,12 +386,27 @@ def run_mutations(
         timeout_s=cfg.mutation.timeout_seconds,
         config=cfg,
     )
-    return parse_mutmut_meta(
+    report = parse_mutmut_meta(
         workspace,
         seed_id=seed_id,
         evidence_id=probe.evidence_id,
         probe=probe,
     )
+    # Fail-closed: lượt chạy hỏng mà KHÔNG thấy mutant nào là "chưa đo", không
+    # phải "đo xong, sạch". Hai thứ đó cùng cho `killed=0, survived=0` nên chúng
+    # phải được tách ở đây, chỗ duy nhất còn cầm cả exit code lẫn report.
+    # Nguyên nhân hay gặp nhất: mutmut không đoán ra thư mục mã nguồn, vì nó chỉ
+    # nhận `lib/`, `src/`, hoặc một thư mục trùng tên với CWD (xem `mutmut_argv`).
+    if report.total_seen == 0 and (probe.exit_code != 0 or probe.blocked):
+        raise CertusError(
+            f"lượt mutation không sinh ra mutant nào và probe kết thúc bất thường "
+            f"(exit {probe.exit_code}, blocked={probe.blocked}). Đây KHÔNG phải "
+            f"mutation score 0 — đây là lượt chạy chưa xảy ra. mutmut 3.2 tìm mã "
+            f"nguồn bằng cách đoán từ CWD ({workspace}): nó chỉ nhận `lib/`, "
+            f"`src/`, hoặc một thư mục trùng tên thư mục hiện hành. "
+            f"stderr: {probe.stderr.strip().splitlines()[-1] if probe.stderr.strip() else '(rỗng)'}"
+        )
+    return report
 
 
 __all__ = [

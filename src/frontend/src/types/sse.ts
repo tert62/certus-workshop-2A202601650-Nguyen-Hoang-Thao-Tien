@@ -16,7 +16,7 @@
  *   event: error    data: {"code": "...", "msg": "..."}
  */
 
-import type { Cell, Claim, GateVerdict } from './contracts';
+import type { Cell, Claim, GateVerdict, RejectedClaim } from './contracts';
 
 export interface StepPayload {
   step: number;
@@ -61,6 +61,12 @@ export interface WarningPayload {
 export interface DonePayload {
   trace_id: string;
   claims: number;
+  /**
+   * Câu mô hình đã nói mà validator backend từ chối. Đi cùng `claims` chứ không
+   * ở một lời gọi REST riêng: đọc "12 claim" mà không thấy "6 câu bị loại" là
+   * đọc một nửa kết quả.
+   */
+  rejected_claims?: RejectedClaim[];
   blocked: boolean;
 }
 

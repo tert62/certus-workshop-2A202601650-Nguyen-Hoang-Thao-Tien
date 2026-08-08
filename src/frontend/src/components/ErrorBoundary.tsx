@@ -37,7 +37,8 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    // eslint-disable-next-line no-console
+    // console.error có chủ đích: panel vỡ phải để lại dấu vết ở devtools, nếu
+    // không thì ErrorBoundary nuốt luôn cả nguyên nhân.
     console.error('[CERTUS] panel render lỗi:', error, info.componentStack);
   }
 

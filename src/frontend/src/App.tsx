@@ -279,7 +279,10 @@ export default function App() {
                 </Tabs.Panel>
 
                 <Tabs.Panel value="claims">
-                  <ClaimInspector claims={store.claims} />
+                  <ClaimInspector
+                    claims={store.claims}
+                    rejected={store.done?.rejected_claims ?? []}
+                  />
                 </Tabs.Panel>
 
                 <Tabs.Panel value="trace">

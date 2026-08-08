@@ -163,6 +163,36 @@ def load_mutation_artifact(
     return data
 
 
+def mutation_counts(artifact: dict[str, Any] | None) -> tuple[int, int] | None:
+    """(mutant bị giết, tổng mutant) của artifact — hoặc None nếu không có artifact.
+
+    Đây là MẪU SỐ THỨ BA mà README hứa và trước đây không ai tính:
+    `CoverageOut.mutation` được khai trong schema nhưng chưa từng được gán, nên
+    CLI in ra hai dòng trong khi tài liệu nói ba.
+
+    Hai dạng artifact:
+
+    * dạng GIÀU — host chạy mutmut trên nhiều mutant rồi khai thẳng `killed` và
+      `total`. Dùng nguyên hai con số đó.
+    * dạng MỘT-MUTANT (bản đang commit trong `fixtures/mutations/`) — artifact
+      neo về đúng một mutant có `operator` + `target_path` cụ thể. Lúc đó
+      k/n = 1/1 hoặc 0/1.
+
+    Cỡ mẫu 1 KHÔNG bị làm tròn thành "đã kiểm mutation": `rate()` gắn cờ
+    `n-too-small` và Wilson trả về một khoảng gần như toàn dải. Đó chính là bài
+    học `M1` của DEBTS.md — bản ghi gốc `{"killed":0,"survived":2,"rate":1.0}`
+    đọc như 100% trong khi cỡ mẫu 2 chưa nói được gì. Ở đây con số nhỏ vẫn hiện
+    ra, nhưng hiện ra KÈM khoảng của nó.
+    """
+    if not artifact:
+        return None
+    killed = artifact.get("killed")
+    total = artifact.get("total")
+    if isinstance(killed, int) and isinstance(total, int) and total > 0 and killed <= total:
+        return killed, total
+    return (1 if artifact.get("verdict") == "killed" else 0), 1
+
+
 def mutation_run_for_cell(
     artifact: dict[str, Any] | None, *, zone_id: str, cell_id: str
 ) -> dict[str, Any] | None:

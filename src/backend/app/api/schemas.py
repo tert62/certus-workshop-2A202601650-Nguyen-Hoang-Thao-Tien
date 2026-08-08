@@ -167,12 +167,35 @@ class ClaimOut(BaseModel):
     supported_by: list[str] = Field(default_factory=list)
 
 
+class RejectedClaim(BaseModel):
+    """Một câu mô hình đã nói mà validator của hệ TỪ CHỐI cho ra ngoài.
+
+    Vì sao phải có trường riêng thay vì im lặng bỏ: một claim bị loại làm câu
+    trả lời NGẮN ĐI mà không để lại dấu vết nào trong response, nên người đọc
+    thấy một đoạn văn thiếu chứ không thấy một quy tắc đang thi hành. Đo được
+    trên cassette đang commit: 9/10 lượt có 3–6 claim `OBSERVED` không mang
+    anchor, tức tới một nửa phần diễn giải biến mất im lặng.
+
+    Giữ nguyên văn bản của claim ở đây KHÔNG phải là cho nó đi cửa sau: nó
+    không nằm trong `claims`, không được downstream tính là bằng chứng, và luôn
+    đi kèm `reason`. Đây là tang vật, không phải kết luận.
+    """
+
+    id: str
+    text: str
+    label: str
+    reason: str
+
+
 class AnalyzeResponse(BaseModel):
     run_id: str
     trace_id: str
     target: str
     coverage: CoverageOut
     claims: list[ClaimOut] = Field(default_factory=list)
+    #: Claim bị validator loại. Rỗng là trạng thái BÌNH THƯỜNG, không phải mặc định
+    #: vô nghĩa — nó nói "mọi câu mô hình nói đều qua được cửa".
+    rejected_claims: list[RejectedClaim] = Field(default_factory=list)
     gates: list[GateVerdict] = Field(default_factory=list)
     verdict: Literal["pass", "blocked", "inconclusive"] = "inconclusive"
     files_sent_to_model: list[str] = Field(default_factory=list)

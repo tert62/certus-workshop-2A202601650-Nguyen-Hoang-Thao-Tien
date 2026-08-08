@@ -135,6 +135,20 @@ export interface GateVerdict {
   reason?: string | null;
 }
 
+/**
+ * Một câu mô hình đã nói mà validator của backend TỪ CHỐI cho vào `claims`.
+ *
+ * Có kiểu riêng vì nó không phải một `Claim` bị hạ cấp — nó chưa bao giờ là
+ * claim. Hiển thị nó là để người đọc thấy QUY TẮC đang thi hành; im lặng bỏ đi
+ * chỉ để lại một đoạn văn ngắn hơn bình thường.
+ */
+export interface RejectedClaim {
+  id: string;
+  text: string;
+  label: string;
+  reason: string;
+}
+
 /** Một dòng của sổ bằng chứng append-only (SDD 00 §5.4). */
 export interface LedgerRecord {
   claim_id: string;

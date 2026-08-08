@@ -26,10 +26,11 @@ interface Props {
 }
 
 export function GateChain({ gates }: Props) {
-  // Chỉ nhận verdict ĐÚNG shape chuỗi-5-cổng (có mảng `findings`). Luồng analyze
-  // thật phát event `gate` là FLOOR-verdict theo zone (shape khác hẳn) — lọc ra
-  // để panel không dựng thẻ vỡ; không có cái nào hợp lệ thì hiện trạng thái rỗng
-  // thay vì crash. (Chuỗi 5 cổng chưa được nối vào luồng analyze — mục design.)
+  // Chỉ nhận verdict ĐÚNG shape `GateVerdict` (có mảng `findings`). Backend nay
+  // phát event `gate` đúng hợp đồng `types/sse.ts` — một `GateVerdict` cho mỗi
+  // zone của cổng sàn. Bộ lọc vẫn giữ: nó là hàng rào chống một shape thứ hai
+  // lẻn vào lần nữa, và cái shape cũ (dict sàn thô) từng làm panel này trống
+  // trơn suốt cả luồng backend thật trong khi mock thì đầy đủ.
   const valid = gates.filter((g) => g && Array.isArray((g as GateVerdict).findings));
   const ordered = [...valid].sort(
     (a, b) => GATE_ORDER.indexOf(a.gate) - GATE_ORDER.indexOf(b.gate),
@@ -69,8 +70,11 @@ export function GateChain({ gates }: Props) {
       )}
 
       <Group gap={4} align="stretch" wrap="wrap">
+        {/* Khoá gồm cả chỉ số: luồng analyze phát NHIỀU verdict cùng tên cổng
+            (`grid`, một cái cho mỗi zone), nên khoá chỉ theo `gate.gate` sẽ
+            trùng và React bỏ mất thẻ. */}
         {ordered.map((gate, i) => (
-          <Group key={gate.gate} gap={4} align="stretch" wrap="nowrap">
+          <Group key={`${gate.gate}-${i}`} gap={4} align="stretch" wrap="nowrap">
             <GateCard gate={gate} />
             {i < ordered.length - 1 && (
               <Box style={{ display: 'flex', alignItems: 'center' }}>

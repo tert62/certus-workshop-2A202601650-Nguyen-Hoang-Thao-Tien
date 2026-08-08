@@ -16,7 +16,7 @@
 
 import { Alert, Badge, Box, Group, Paper, Stack, Table, Text, Title, Tooltip } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
-import type { Claim } from '@/types/contracts';
+import type { Claim, RejectedClaim } from '@/types/contracts';
 import { UNVERIFIED } from '@/types/contracts';
 import { isMalformedRateClaim, isUnanchoredObserved, LABEL_STYLES } from '@/lib/labels';
 import { fraction } from '@/lib/format';
@@ -28,12 +28,18 @@ const UNANCHORED_LINE =
 
 interface Props {
   claims: Claim[];
+  /**
+   * Câu backend đã TỪ CHỐI. Mặc định rỗng để nơi gọi cũ không vỡ, nhưng rỗng ở
+   * đây phải nghĩa là "không câu nào bị từ chối", KHÔNG phải "chưa ai truyền
+   * vào" — nên `App.tsx` luôn truyền tường minh.
+   */
+  rejected?: RejectedClaim[];
 }
 
-export function ClaimInspector({ claims }: Props) {
+export function ClaimInspector({ claims, rejected = [] }: Props) {
   const unanchored = claims.filter(isUnanchoredObserved);
 
-  if (claims.length === 0) {
+  if (claims.length === 0 && rejected.length === 0) {
     return (
       <Alert color="gray" variant="light" title="Chưa có claim nào">
         Chạy một lượt phân tích để xem các claim mà CERTUS phát biểu.
@@ -94,6 +100,72 @@ export function ClaimInspector({ claims }: Props) {
             <Table.Tbody>
               {claims.map((claim) => (
                 <ClaimRow key={claim.id} claim={claim} />
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
+      </Paper>
+
+      {rejected.length > 0 && <RejectedTable rejected={rejected} />}
+    </Stack>
+  );
+}
+
+/**
+ * Bảng "câu bị chặn ở cửa".
+ *
+ * Vì sao hiển thị thay vì bỏ đi: mô hình nói N câu, bảng trên chỉ có M < N, và
+ * chênh lệch đó trước đây không xuất hiện ở đâu trên UI — người đọc thấy một
+ * câu trả lời ngắn, không thấy một cái cổng đang làm việc. Đo trên cassette
+ * đang commit: 3–6 câu mỗi lượt.
+ *
+ * Bảng này KHÔNG dùng `LABEL_STYLES` (không tô màu nhãn) — cố ý. Tô nhãn cho
+ * một câu đã bị từ chối là trả lại cho nó đúng thứ uy tín mà cửa vừa lấy đi.
+ */
+function RejectedTable({ rejected }: { rejected: RejectedClaim[] }) {
+  return (
+    <Stack gap="xs">
+      <Alert
+        color="orange"
+        variant="light"
+        icon={<IconAlertTriangle size={18} />}
+        title={`${rejected.length} câu bị chặn ở cửa, không hiển thị như claim`}
+      >
+        <Text size="sm">
+          Mô hình đã nói những câu dưới đây, nhưng chúng không qua được validator của hệ nên không
+          được tính là claim. Chúng nằm đây làm TANG VẬT, không phải kết luận — đừng trích dẫn.
+        </Text>
+      </Alert>
+
+      <Paper withBorder radius="md" p={0}>
+        <Table.ScrollContainer minWidth={720}>
+          <Table striped verticalSpacing="sm" fz="sm">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th w={90}>Nhãn khai</Table.Th>
+                <Table.Th>Câu bị từ chối</Table.Th>
+                <Table.Th w={300}>Lý do từ chối</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {rejected.map((r) => (
+                <Table.Tr key={r.id}>
+                  <Table.Td>
+                    <Badge color="gray" variant="outline" size="sm">
+                      {r.label}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm" td="line-through" c="dimmed">
+                      {r.text}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs" ff="monospace" c="orange.8">
+                      {r.reason}
+                    </Text>
+                  </Table.Td>
+                </Table.Tr>
               ))}
             </Table.Tbody>
           </Table>

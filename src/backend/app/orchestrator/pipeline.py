@@ -37,11 +37,21 @@ from app.api.schemas import (
     ClaimOut,
     CoverageOut,
     RateOut,
+    RejectedClaim,
     StreamEvent,
     ZoneOut,
 )
 from app.contracts.errors import CassetteMissError, CertusError, ConfigError
-from app.contracts.types import Band, Cell, Claim, Interval
+from app.contracts.types import (
+    Band,
+    Cell,
+    Claim,
+    EvidenceTier,
+    Finding,
+    GateName,
+    GateVerdict,
+    Interval,
+)
 from app.core.grid.cells import cell_id as make_cell_id
 from app.core.grid.cells import enumerate_t_wise
 from app.core.grid.project import project_cell
@@ -57,6 +67,7 @@ from app.core.stats.intervals import interval
 from app.orchestrator.observe import (
     load_mutation_artifact,
     lookup,
+    mutation_counts,
     mutation_run_for_cell,
     observations_for_cells,
     scan_tests,
@@ -340,6 +351,15 @@ def _format_artifacts(coverage: CoverageOut) -> str:
 
     Luật số 3 của luồng: model đọc số, không tính số. Ba tầng mẫu số đứng cạnh
     nhau và không gộp — đúng thứ prompt dặn model giữ nguyên.
+
+    KHỐI NÀY LÀ MỘT HỢP ĐỒNG BẤT BIẾN, không phải một chỗ để bổ sung dần. Nó đi
+    vào `messages`, `messages` đi vào `cassette_key` (sha256 của model + system +
+    messages + tools). Thêm MỘT dòng ở đây là đổi khoá của toàn bộ 10 cassette
+    trong `fixtures/cassettes/` → mọi lượt chạy mock trượt cassette → cả lớp mất
+    phần diễn giải. `coverage.mutation` vì vậy CÓ trong response (UI và CLI in
+    đủ ba mẫu số) nhưng CHƯA có ở đây: muốn model nói về nó thì phải thêm dòng
+    và THU LẠI cassette trong cùng một lượt (`CERTUS_LLM_MODE=record`), không
+    làm được nửa vời.
     """
     lines: list[str] = []
     if coverage.line is not None:
@@ -362,6 +382,86 @@ def _format_artifacts(coverage: CoverageOut) -> str:
             f"{z.cells_scoreable}/{z.cells_total} ô chấm được"
         )
     return "\n".join(lines)
+
+
+#: Tệp mà mọi finding của cổng sàn neo về. Sàn là CHÍNH SÁCH, nên chỗ phải sửa
+#: khi một zone đỏ là tệp khai sàn, không phải tệp mã nào.
+_FLOOR_SOURCE = "src/backend/config/floor.yaml"
+
+
+def floor_gate_verdicts(
+    floor_verdicts: Mapping[str, Mapping[str, Any]],
+    per_zone: Mapping[str, Mapping[str, Any]],
+    *,
+    blocking_w: float,
+) -> list[GateVerdict]:
+    """Đổi phán quyết sàn per-zone thành `GateVerdict` — một cổng cho mỗi zone.
+
+    Vì sao cần hàm này: `AnalyzeResponse.gates` từng là `[]` HẰNG SỐ trong khi
+    luồng đã chấm sàn cho từng zone và phát ra dưới dạng sự kiện SSE thô. Hệ quả
+    đo được: `GateChain` trên UI chỉ có dữ liệu ở chế độ mock, nên chuỗi cổng —
+    thứ mà cả sản phẩm này lấy làm trung tâm — vô hình khi chạy với backend thật.
+
+    Vì sao KHÔNG gọi `gates.registry.run_chain()` ở đây, dù registry tự khai
+    "pipeline PHẢI cắm vào ở bước 7":
+
+    * `requirements`, `design`, `execution`, `outcome` đọc tạo tác của một luồng
+      REVIEW PR (tiêu chí nghiệm thu, ma trận thiết kế, diff, cửa sổ hậu triển
+      khai). Luồng analyze không sinh ra cái nào. Truyền `None` vào không phải
+      "bỏ qua" mà là `ctx.refuse()` → `verdict="fail", blocked=True`, tức MỌI
+      lượt phân tích sẽ đỏ vì bốn lý do không liên quan gì tới repo người dùng.
+      Một cái đỏ giả cũng hỏng hệt một cái xanh giả.
+    * `gates.grid.check_grid` so mọi zone chặn với MỘT ngưỡng `grid.min_band_score
+      = 1.0`, trong khi `floor.yaml` cố ý đặt sàn KHÁC NHAU cho từng zone và giải
+      thích tại sao (`concurrency: 0.6` — "đòi high ở đây là đòi một bằng chứng
+      mà cỗ máy hiện chưa sinh ra được"). Chạy nó ở đây là thi hành một chính
+      sách mà tệp chính sách đã bác bỏ, có ghi lý do.
+
+    Nên cổng của luồng analyze là cổng sàn per-zone, và nó ra ngoài bằng đúng
+    kiểu `GateVerdict` như mọi cổng khác.
+    """
+    out: list[GateVerdict] = []
+    for zone_id in sorted(floor_verdicts):
+        v = floor_verdicts[zone_id]
+        summary = per_zone[zone_id]
+        meets = bool(v["meets_floor"])
+        blocking = float(summary["w"]) >= blocking_w
+        findings: list[Finding] = []
+        if not meets:
+            findings.append(
+                Finding(
+                    rule_id="FLOOR-ZONE-BELOW-MIN",
+                    # Zone không chặn dưới sàn vẫn là một phát hiện, chỉ không
+                    # phải một cái chặn — hạ severity, KHÔNG giấu finding.
+                    severity="error" if blocking else "warn",
+                    file=_FLOOR_SOURCE,
+                    line=1,
+                    finding=(
+                        f"zone {zone_id!r}: ô tệ nhất band={v['worst_band']} "
+                        f"score={v['worst_score']}, sàn đòi >= {v['required_min_score']}. "
+                        f"Lý do sàn: {v['reason']}"
+                    ),
+                )
+            )
+        out.append(
+            GateVerdict(
+                gate=GateName.GRID,
+                verdict="pass" if meets else "fail",
+                evidence_tier=EvidenceTier.DERIVED,
+                findings=findings,
+                compare_op=">=",
+                # Mẫu số là số ô CHẤM ĐƯỢC của zone. 0 ở đây nghĩa là zone không
+                # còn ô nào để chấm — đỏ, không phải xanh (xem GateVerdict).
+                denominator=int(summary["cells_scored"]),
+                blocked=(not meets) and blocking,
+                reason=(
+                    f"zone {zone_id} (w={summary['w']}, "
+                    f"{'chặn' if blocking else 'không chặn'}): "
+                    f"worst={v['worst_score']} vs sàn {v['required_min_score']}"
+                ),
+            )
+        )
+    return out
 
 
 def rate(name: str, k: int, n: int, *, conf: float = 0.95) -> RateOut:
@@ -498,6 +598,10 @@ class Pipeline:
             yield self._event(
                 "done", trace_id,
                 claims=len(final["claims"]) if final else 0,
+                # Đi kèm ngay trong `done` chứ không đợi một lời gọi REST thứ hai:
+                # số claim HIỂN THỊ mà không kèm số claim BỊ TỪ CHỐI là đúng cái
+                # nửa sự thật khiến câu trả lời ngắn đi mà không ai biết vì sao.
+                rejected_claims=final["rejected_claims"] if final else [],
                 blocked=(final["verdict"] == "blocked") if final else False,
                 elapsed_s=round(time.time() - started, 3),
             )
@@ -610,8 +714,16 @@ class Pipeline:
             rate("line_coverage", lines_hit, lines_total) if lines_total else None
         )
 
+        # Mẫu số thứ ba. Vắng artifact ⇒ None, và None hiện ra là "không có dòng
+        # mutation" chứ không phải 0% — thiếu bằng chứng khác hẳn bằng chứng xấu.
+        mcounts = mutation_counts(mutation_artifact)
+        mutation_rate = (
+            rate("mutation_score", mcounts[0], mcounts[1]) if mcounts else None
+        )
+
         coverage = CoverageOut(
             line=line_rate,
+            mutation=mutation_rate,
             grid=grid_rate,
             risk_weighted=rw,
             per_zone=[
@@ -666,6 +778,7 @@ class Pipeline:
         # trực tiếp rồi trả đúng một object JSON như phần 'Định dạng trả lời' đòi.
 
         claims: list[Claim] = []
+        rejected: list[RejectedClaim] = []
         llm_warnings: list[str] = []
         span = tracing.llm_span("analyze.explain")
         client = LLMClient(self.cfg)
@@ -709,6 +822,15 @@ class Pipeline:
                         llm_warnings.append(
                             f"claim {c.id!r} dị dạng, không hiển thị: {detail}"
                         )
+                        # Loại khỏi `claims` NHƯNG không xoá khỏi lịch sử: câu bị
+                        # từ chối đi ra bằng `rejected_claims` để claim inspector
+                        # cho người đọc thấy quy tắc đang thi hành, thay vì thấy
+                        # một đoạn văn ngắn hơn mà không biết vì sao.
+                        rejected.append(
+                            RejectedClaim(
+                                id=c.id, text=c.text, label=c.label.value, reason=detail
+                            )
+                        )
                         continue
                     claims.append(c)
         except CassetteMissError:
@@ -732,11 +854,16 @@ class Pipeline:
             zid for zid, v in floor_verdicts.items()
             if per_zone[zid]["w"] >= blocking_w and not v["meets_floor"]
         ]
-        for zid, v in floor_verdicts.items():
-            yield self._event(
-                "gate", trace_id, zone_id=zid,
-                blocking=per_zone[zid]["w"] >= blocking_w, **v,
-            )
+        gate_verdicts = floor_gate_verdicts(
+            floor_verdicts, per_zone, blocking_w=blocking_w
+        )
+        # Sự kiện `gate` mang ĐÚNG `GateVerdict`, đúng như `types/sse.ts` khai từ
+        # đầu (`{ event: 'gate'; data: GateVerdict }`). Trước đây nó mang dict sàn
+        # thô (`meets_floor`, `required_min_score`…) — một hình dạng thứ hai cho
+        # cùng một tên sự kiện, nên `GateChain` phải lọc bỏ mọi thứ không có mảng
+        # `findings` và cuối cùng không hiển thị gì khi chạy backend thật.
+        for gv in gate_verdicts:
+            yield self._event("gate", trace_id, **gv.model_dump(mode="json"))
         blocked = bool(blocking_failures)
         verdict = "blocked" if blocked else ("pass" if claims else "inconclusive")
         # `run_gates` là bước 8 trong STAGES: chuỗi cổng sàn per-zone vừa chạy ở
@@ -764,7 +891,8 @@ class Pipeline:
             target=req.target or str(req.upload_id),
             coverage=coverage,
             claims=[ClaimOut(claim=c, supported_by=c.evidence_ids) for c in claims],
-            gates=[],
+            rejected_claims=rejected,
+            gates=gate_verdicts,
             verdict=verdict,
             files_sent_to_model=sent,
             warnings=([held_warning] if held_warning else []) + llm_warnings,
@@ -818,38 +946,63 @@ def run_target_suite(root: Path) -> tuple[int, set[str], tuple[int, int]]:
     nhất có allowlist và có ghi sổ bằng chứng. Một lối chạy thứ hai, dù chỉ để
     tiện, là một lối vòng qua cả hai thứ đó.
     """
+    from app.core.exec.coverage_reader import read_coverage_data
     from app.core.exec.runner import run_probe
 
     result = run_probe(root, ["coverage", "run", "-m", "pytest", "-q"])
+    # Probe BỊ CHẶN không phải một phép đo — xem `ProbeResult.blocked`. Trả về
+    # (0, 0) ở đây từng làm chính CERTUS mắc lỗi mà CERTUS tồn tại để bắt: cùng
+    # một repo cho `line 156/160 · grid 27/63` khi probe chạy được và
+    # `không có dòng line · grid 0/63` khi probe bị chặn, KHÔNG một cảnh báo nào.
+    # Người đọc con số thứ hai không có cách nào biết mình đang nhìn một sự cố
+    # hạ tầng chứ không phải một bộ kiểm thưa.
+    if result.blocked:
+        raise CertusError(
+            f"không chạy được bộ kiểm của repo: {result.block_reason}. "
+            f"Lệnh: {result.command}. Đây là sự cố thực thi, không phải độ phủ "
+            f"thấp — CERTUS từ chối phát biểu tỉ lệ nào trên một lượt chạy "
+            f"chưa từng xảy ra."
+        )
+
+    data_file = root / ".coverage"
+    if not data_file.exists():
+        raise CertusError(
+            f"lượt chạy kết thúc (exit {result.exit_code}) nhưng không sinh ra "
+            f"{data_file.name}. Thiếu artifact độ phủ và độ phủ 0% là hai chuyện "
+            f"khác nhau; kiểm tra repo có test nào được thu thập không."
+        )
+
+    # Cửa fail-closed của `coverage_reader._finish()`: report đọc được nhưng RỖNG
+    # (quên --source, chỉ collect mà không sinh report, sai format) cho ra đúng
+    # một triệu chứng là 0% "đọc như một phép đo tự tin". Để module đó từ chối
+    # trước, rồi mới đếm — nó là chỗ ở duy nhất của luật "report rỗng thì nổ".
+    read_coverage_data(data_file)
+
     covered: set[str] = set()
     lines_hit = 0
     lines_total = 0
-    data_file = root / ".coverage"
-    if data_file.exists():
-        try:
-            # Dùng `analysis2()` của chính coverage.py chứ không tự đếm câu lệnh:
-            # nó biết dòng nào CHẠY ĐƯỢC, dòng nào bị `# pragma: no cover`, dòng
-            # nào chỉ là tiếp nối của câu lệnh trước. Bản tự đếm bằng AST của tôi
-            # từng cho ra 444/444 = 100% vì nhánh parse nổ rồi rơi về
-            # `total = hit` — mẫu số bằng tử số thì tỉ lệ luôn đẹp.
-            from coverage import Coverage
+    # Dùng `analysis2()` của chính coverage.py chứ không tự đếm câu lệnh: nó biết
+    # dòng nào CHẠY ĐƯỢC, dòng nào bị `# pragma: no cover`, dòng nào chỉ là tiếp
+    # nối của câu lệnh trước. Bản tự đếm bằng AST của tôi từng cho ra 444/444 =
+    # 100% vì nhánh parse nổ rồi rơi về `total = hit` — mẫu số bằng tử số thì tỉ
+    # lệ luôn đẹp. `read_coverage_data` ở trên KHÔNG thay được nó: `CoverageData`
+    # chỉ lưu tập dòng ĐÃ CHẠY, nên mẫu số suy từ đó luôn bằng tử số.
+    from coverage import Coverage
 
-            cov = Coverage(data_file=str(data_file))
-            cov.load()
-            for measured in sorted(cov.get_data().measured_files()):
-                name = Path(measured).stem
-                if name.startswith("test_") or name == "conftest":
-                    # Bài kiểm không thuộc mẫu số của độ phủ: đo xem bài kiểm có
-                    # tự chạy hết chính nó không thì luôn ra gần 100%.
-                    continue
-                _fn, statements, _excluded, missing, _fmt = cov.analysis2(measured)
-                lines_total += len(statements)
-                lines_hit += len(statements) - len(missing)
-                covered.add(name)
-                for line_no in set(statements) - set(missing):
-                    covered.add(f"{name}:{line_no}")
-        except Exception:  # noqa: BLE001 — thiếu coverage không được làm chết luồng
-            lines_hit = lines_total = 0
+    cov = Coverage(data_file=str(data_file))
+    cov.load()
+    for measured in sorted(cov.get_data().measured_files()):
+        name = Path(measured).stem
+        if name.startswith("test_") or name == "conftest":
+            # Bài kiểm không thuộc mẫu số của độ phủ: đo xem bài kiểm có tự chạy
+            # hết chính nó không thì luôn ra gần 100%.
+            continue
+        _fn, statements, _excluded, missing, _fmt = cov.analysis2(measured)
+        lines_total += len(statements)
+        lines_hit += len(statements) - len(missing)
+        covered.add(name)
+        for line_no in set(statements) - set(missing):
+            covered.add(f"{name}:{line_no}")
 
     # Tên hàm cấp module cũng được coi là "đã chạm", để `code_path` tra được
     # bằng tên hàm thay vì bằng số dòng.

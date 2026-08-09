@@ -15,6 +15,18 @@ if (existsSync(learningHtml)) {
 }
 
 // Backend FastAPI chạy ở 8000; khi VITE_USE_MOCK=0 thì proxy này là đường ra thật.
+//
+// Đích proxy đổi được bằng `VITE_API_TARGET` vì 8000 là một trong những cổng bị
+// tranh chấp nhiều nhất trên máy lập trình viên. Ca đã gặp thật: cổng 8000 đang
+// bị một `python -m http.server` và một container Docker của dự án khác giữ, nên
+// uvicorn của CERTUS bind thất bại rồi TẮT LẶNG, còn UI vẫn mở lên bình thường và
+// gửi mọi request /api vào ứng dụng lạ. Triệu chứng là "giao diện chạy nhưng
+// không có dữ liệu" — không chỗ nào nói ra rằng nó đang nói chuyện với app khác.
+//
+// Đổi cổng backend mà không đổi được đích proxy thì phải sửa tệp này rồi nhớ
+// hoàn nguyên, và cái phải-nhớ-hoàn-nguyên là thứ sớm muộn bị commit nhầm.
+const apiTarget = process.env.VITE_API_TARGET ?? 'http://127.0.0.1:8000';
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -29,7 +41,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        target: apiTarget,
         changeOrigin: true,
       },
     },

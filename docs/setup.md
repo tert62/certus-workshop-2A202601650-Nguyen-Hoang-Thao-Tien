@@ -177,13 +177,32 @@ npm install --legacy-peer-deps
 ```
 
 **Cổng 8000 hoặc 5173 đã bị chiếm**
+
+Kiểm ai đang giữ cổng trước:
 ```bash
-uvicorn app.main:app --port 8001
-npm run dev -- --port 5174
+lsof -nP -iTCP:8000 -sTCP:LISTEN     # macOS/Linux
+docker ps                            # container cũng chiếm cổng
 ```
-Nếu đổi cổng backend, sửa `src/frontend/vite.config.ts` (proxy `/api`) hoặc đặt
-`VITE_API_BASE=http://localhost:8001` trong `src/frontend/.env`. Tên biến là
-`VITE_API_BASE` — không phải `VITE_API_URL`.
+
+Đổi cổng backend thì phải báo cho frontend biết, **cả hai lệnh trong cùng một lần**:
+```bash
+# terminal 1
+uvicorn app.main:app --port 8011
+# terminal 2
+VITE_API_TARGET=http://127.0.0.1:8011 npm run dev
+```
+
+> **Đây là cái bẫy nguy hiểm nhất trong cả phần cài đặt.** Nếu cổng 8000 đang bị
+> app khác giữ, `uvicorn` in một dòng `[Errno 48] address already in use` rồi
+> **tắt lặng**, trong khi giao diện vẫn mở lên bình thường — và mọi request
+> `/api` của nó đi thẳng vào ứng dụng lạ kia. Triệu chứng bạn thấy là "UI chạy
+> nhưng không ra dữ liệu", không chỗ nào nói ra nguyên nhân thật.
+>
+> Cách kiểm chắc chắn: `curl http://localhost:8011/health` phải trả về
+> `{"status":"ok","llm_mode":"mock"}`. Có chữ `llm_mode` thì mới là CERTUS.
+
+`VITE_API_TARGET` là đích proxy lúc **chạy dev**. Khác với `VITE_API_BASE` (gốc
+URL nhúng vào bản **build**) — và không có biến nào tên `VITE_API_URL`.
 
 **Xem giao diện mà chưa chạy được backend**
 ```bash
